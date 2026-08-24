@@ -1,0 +1,1 @@
+- [Training tracker spec constraints](training-tracker-spec.md) — user's fixed data rules, phased delivery (logging first, notifications later), and do-not-build list.

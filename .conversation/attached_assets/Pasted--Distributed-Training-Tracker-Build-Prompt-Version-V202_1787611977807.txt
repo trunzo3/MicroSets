@@ -1,0 +1,150 @@
+# Distributed Training Tracker — Build Prompt
+**Version:** V20260824E
+
+---
+
+## What to build
+
+A single-user iPhone app for logging short sets of exercise scattered through a working day, plus occasional heavier resistance sessions. The app sends its own reminders on a configurable interval and lets me log a set directly from the notification.
+
+No accounts, no backend, no server, no sync, no social features. All data stays on the device.
+
+Expo / React Native. Target is an EAS build installed through TestFlight on my own device.
+
+---
+
+## Platform constraints
+
+- iOS allows a maximum of 64 pending local notification requests per app. It is a hard system limit.
+- Do not use repeating notification triggers. A repeating trigger cannot be cancelled for a single occurrence, which breaks the reset behavior below.
+- Local notifications only. No push service, no Firebase, no Expo push tokens.
+
+---
+
+## Data rules
+
+Design the schema yourself. These are mine, not yours to change:
+
+1. **A set is the atomic unit. There is no workouts or sessions table.** A heavy session is derived — a run of sets tagged `heavy` within 90 minutes of each other displays as one session.
+2. **Store a full datetime on every set, not a date.** Time of day is an analytical dimension.
+3. **RIR is required on every set,** as an integer 0–4 where 4 means "4 or more". Not optional, not nullable.
+4. **Flag sets whose timestamp I edited.** The notification logic depends on distinguishing them.
+5. **Every movement carries exactly one pattern,** required, from this fixed list: squat, hinge, horizontal push, vertical push, horizontal pull, vertical pull. Each pattern has its own color, used consistently everywhere a movement appears.
+
+I only train compound movements. There is no isolation or accessory category. A movement that doesn't map to one of the six patterns doesn't get added.
+
+Movements are user-defined and the variation lives in the movement name. "Deep squat" and "Squat jump" are two separate movements. "Deep squat" empty-handed and "Deep squat" holding 20 lb are the same movement with different load values. Do not build a variation, depth, or style field.
+
+Seed the movement list with one per pattern: Deep squat (squat), Banded Romanian deadlift (hinge), Push-up (horizontal push), Pike push-up (vertical push), Inverted row (horizontal pull), Pull-up (vertical pull).
+
+---
+
+## Notification behavior
+
+Settings: active hours, interval (30 / 45 / 60 minutes), active weekdays.
+
+**Queue.** Maintain a queue of one-off scheduled notifications roughly 24 hours ahead, at the configured interval, inside active hours only.
+
+**Rebuild triggers.** Wipe the entire pending queue and rebuild it from `now + interval` when I log a set at the current time, or when I open the app.
+
+**Do not rebuild** when I backdate or edit an existing set. Correcting a rep count at 4pm must not push my next prompt to 5pm.
+
+**Ignoring a notification does nothing.** The already-queued later notifications still fire on their original schedule. If I blow past the 10:00 prompt, 11:00 still arrives.
+
+**Content.** Each notification suggests a movement, rotating through my movement list in order so none gets skipped.
+
+**Actions on the notification itself:** Log (opens straight to logging with the suggested movement selected), Snooze 15, Skip. Skip records that the prompt was dismissed.
+
+**Suppression.** No notifications outside active hours, on inactive days, or while a heavy session is active.
+
+**Permission.** Request it on a dedicated onboarding screen that explains why. iOS shows the system prompt once per install, so include a path to iOS Settings if I deny it.
+
+---
+
+## Logging
+
+The primary screen and the thing I use ten times a day. It must be operable one-handed, in a doorway, in under three seconds. Two taps for the common case — confirm reps, tap RIR.
+
+Design the screen yourself. The constraint is speed, not layout.
+
+---
+
+## Heavy sessions
+
+A toggle. While on, logged sets are tagged `heavy` and notifications are suppressed. Auto-off after 3 hours with no logging. Settings hold a weekly heavy-session target, default 2.
+
+---
+
+## Benchmarks
+
+Occasional max tests — max reps or max hold for a movement — stored separately from normal sets. Prompt me to retest every 6 weeks per movement. Keep full history. Never auto-adjust any setting or target from a benchmark; record and display only.
+
+---
+
+## Targets
+
+Two, and only two.
+
+- **Daily rep target.** Feeds the pace line on the cumulative curve below.
+- **Weekly pattern coverage.** All six patterns trained at least once in the week.
+
+Do not build a general goal system with goal types, date ranges, or multiple simultaneous goals.
+
+---
+
+## Reports
+
+**1. Today.** Cumulative reps plotted by hour through the day, with my daily rep target drawn as a pace line so I can see at a glance whether I'm ahead or behind. Overlay yesterday's curve for comparison. An incomplete day reading low against a full day is expected and fine — do not try to normalize it.
+
+**2. Pattern coverage.** Six cells in pattern colors, lit or dark, showing which patterns I've trained this week. Glance-level. No percentages.
+
+**3. Period comparison.** Last 7 days vs. previous 7, and last 28 vs. previous 28, with percent change. Sliceable overall and per movement. Show the day count when a period is incomplete rather than displaying a number that looks artificially low.
+
+**4. Progress.** Per movement, reps per set over time with RIR held constant — I pick which RIR value to filter on. Overlay benchmark results on the same timeline.
+
+**5. Interference.** Heavy-session performance against total snack reps in the preceding 48 hours. No statistical tests.
+
+**6. Time of day.** Average reps and average RIR by hour.
+
+**7. Volume.** Daily reps per movement, daily set count, weekly totals. Color by pattern.
+
+---
+
+## Do not build
+
+- Streaks, XP, levels, badges, or celebration animations
+- An exercise library with descriptions, images, or video
+- Generated programs, coaching, or training recommendations
+- Isolation or accessory movement categories
+- A general goal system beyond the two targets above
+- User accounts, login, cloud sync, or sharing
+- A start/stop workout button as the primary logging flow
+- Repeating notification triggers
+
+---
+
+## How I want this delivered
+
+Build logging first and stop. Movements, set logging, and a chronological view of today with a running rep total. I want to use that for a week before the rest exists.
+
+CSV export of every raw set row, all fields, no summaries.
+
+---
+
+## Acceptance walkthrough
+
+The finished app must produce exactly this behavior.
+
+**Setup.** I confirm the seeded movement list. Active hours 7:00 AM–6:00 PM, interval 60 minutes, Mon–Fri. Grant notifications. Tap Start. Queue builds at 7:00, 8:00, 9:00 … 6:00.
+
+**On schedule.** 9:00 AM notification: *Time to move. Suggested: Deep squat.* I pull down, tap **Log**. App opens with Deep squat selected and my last rep count pre-filled. I adjust reps to 22, tap `3` for RIR, tap LOG. Queue wipes and rebuilds: 10:00, 11:00, 12:00, onward.
+
+**Ignored prompt.** 10:00 AM notification fires. I swipe it away. Nothing reschedules. 11:00 AM fires on its original schedule.
+
+**Unprompted set.** 11:30 AM I do pull-ups on my own, open the app, switch to Pull-up, log 6 reps at RIR 2. Queue wipes and rebuilds from 12:30: 12:30, 1:30, 2:30, onward.
+
+**Heavy session.** 5:00 PM I tap Heavy session. Notifications stop. Every set logged is tagged heavy. I tap End session, or it ends itself after 3 hours idle.
+
+**Backdated edit.** 4:00 PM I correct the rep count on a set logged at 10:00 AM. The notification queue does not change.
+
+**Coverage.** By Friday I have logged squat, horizontal push, vertical pull, and horizontal pull. The coverage grid shows those four cells lit and hinge and vertical push dark.

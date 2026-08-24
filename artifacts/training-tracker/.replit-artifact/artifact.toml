@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "Distributed Training Tracker"
+description = "A single-user iPhone app for logging short sets of exercise scattered through the day, plus heavier resistance sessions. Fast one-handed set logging, user-defined compound movements each tagged with one of six movement patterns, and a chronological today view with a running rep total. All data stays on the device."
+version = "1.0.0"
+id = "artifacts/training-tracker"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 22593
+
+[services.development]
+run = "pnpm --filter @workspace/training-tracker run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/training-tracker", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/training-tracker", "run", "serve" ]
+
+[services.env]
+PORT = "22593"
+BASE_PATH = "/"
