@@ -1,0 +1,27 @@
+Four changes to the training tracker. Update replit.md to reflect any that change architecture.
+
+1. MOVEMENT PICKER
+
+Replace the horizontally scrolling chip row on the Log screen with a fixed 2x3 grid of tiles filling the screen width. One tile per movement, colored by its pattern, showing the movement name. No scrolling — the grid must show every movement at once. If I add a seventh movement, expand the grid rather than introducing scroll. All six tiles must be reachable with a thumb in the lower two-thirds of the screen.
+
+2. LOG SCREEN CONTROLS
+
+The rep stepper is currently rendering a minus button with no visible rep count or plus button. Fix it so the current rep count is large and centered with minus on the left and plus on the right.
+
+Remove the "TAP RIR TO LOG" button. Tapping a RIR value commits the set immediately and returns to the empty log screen ready for the next entry. The common case is then exactly two taps: tap a movement tile, tap a RIR value. Reps stay prefilled from my last set of that movement.
+
+3. LOAD
+
+Load is currently a numeric lb field visible on every movement. Change it to:
+
+- Load can be either a numeric weight in lb OR a named resistance band. Bands are not measurable in pounds, so let me define bands by name in the Movements screen and pick one here.
+- Each movement has an optional default load. If a movement has a default, the log screen shows it pre-filled. If it has none, the load field stays collapsed behind a small "add load" control so it doesn't slow down bodyweight logging.
+- Store load on the set record, not on the movement, so history is preserved when the default changes.
+
+4. STORAGE
+
+Migrate persistence from AsyncStorage to expo-sqlite. Same data model, same fields. The reports coming in Phase 2 need grouping and aggregation queries — period comparisons, per-hour averages, per-movement series — and doing those in JavaScript over a full key-value blob will not hold up. Migrate any existing data on first launch.
+
+5. SPEC AMENDMENT FOR PHASE 2
+
+Add this to the deferred spec so it is not lost: the Progress report must plot each distinct load as its own series. Twenty bodyweight squats and twenty squats holding 30 lb are different data points. If they are pooled, adding weight will look like a performance drop. Same movement, same pattern, different load, separate line.

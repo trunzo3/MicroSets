@@ -1,3 +1,8 @@
 const { getDefaultConfig } = require('expo/metro-config');
 
-module.exports = getDefaultConfig(__dirname);
+const config = getDefaultConfig(__dirname);
+
+// expo-sqlite loads its web implementation from a bundled WASM asset.
+config.resolver.assetExts.push('wasm');
+
+module.exports = config;

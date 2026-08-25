@@ -15,7 +15,7 @@ import { useColors } from '@/hooks/useColors';
 import { PATTERN_COLORS, PATTERN_LABELS } from '@/constants/patterns';
 import { useTodaySets, useTraining } from '@/lib/store';
 import { exportCsv } from '@/lib/csv';
-import type { SetEntry } from '@/lib/types';
+import { formatLoad, type SetEntry } from '@/lib/types';
 
 function timeOf(iso: string): string {
   const d = new Date(iso);
@@ -67,7 +67,7 @@ export default function TodayScreen() {
           <Text style={[styles.rowMeta, { color: colors.mutedForeground }]}>
             {timeOf(item.performedAt)}
             {m ? ` · ${PATTERN_LABELS[m.pattern]}` : ''}
-            {item.load ? ` · ${item.load} lb` : ''}
+            {item.load ? ` · ${formatLoad(item.load)}` : ''}
             {item.timestampEdited ? ' · edited' : ''}
           </Text>
         </View>

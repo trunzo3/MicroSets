@@ -16,6 +16,8 @@ export function buildCsv(sets: SetEntry[], movements: Movement[]): string {
     'movement_name',
     'pattern',
     'reps',
+    'load_kind',
+    'load_value',
     'load_lb',
     'rir',
     'performed_at',
@@ -33,7 +35,11 @@ export function buildCsv(sets: SetEntry[], movements: Movement[]): string {
         csvEscape(m?.name ?? ''),
         csvEscape(m?.pattern ?? ''),
         String(s.reps),
-        s.load != null ? String(s.load) : '',
+        s.load?.kind ?? '',
+        s.load?.kind === 'pounds'
+          ? String(s.load.pounds)
+          : csvEscape(s.load?.kind === 'band' ? s.load.band : ''),
+        s.load?.kind === 'pounds' ? String(s.load.pounds) : '',
         String(s.rir),
         s.performedAt,
         s.loggedAt,

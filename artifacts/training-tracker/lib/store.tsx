@@ -7,13 +7,27 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Pattern } from '@/constants/patterns';
-import { makeId, Movement, SetEntry } from '@/lib/types';
-
-const MOVEMENTS_KEY = 'dtt.movements.v1';
-const SETS_KEY = 'dtt.sets.v1';
-const LAST_MOVEMENT_KEY = 'dtt.lastMovement.v1';
+import {
+  initializeDatabase,
+  persistBand,
+  persistLastMovement,
+  persistMovement,
+  persistMovementDefault,
+  persistSet,
+  persistSetPatch,
+  removeBand,
+  removeMovement,
+  removeSet,
+} from '@/lib/database';
+import {
+  makeId,
+  type Load,
+  type Movement,
+  type ResistanceBand,
+  type SetEntry,
+  type SetPatch,
+} from '@/lib/types';
 
 function seedMovements(): Movement[] {
   const now = new Date().toISOString();
@@ -35,76 +49,81 @@ function seedMovements(): Movement[] {
 
 interface TrainingState {
   ready: boolean;
+  error: Error | null;
   movements: Movement[];
   sets: SetEntry[];
+  bands: ResistanceBand[];
   lastMovementId: string | null;
-  addMovement: (name: string, pattern: Pattern) => Movement | null;
-  deleteMovement: (id: string) => boolean;
+  addMovement: (name: string, pattern: Pattern, defaultLoad?: Load) => Promise<Movement | null>;
+  deleteMovement: (id: string) => Promise<boolean>;
+  updateMovementDefaultLoad: (id: string, defaultLoad?: Load) => Promise<void>;
+  addBand: (name: string) => Promise<ResistanceBand | null>;
+  deleteBand: (id: string) => Promise<boolean>;
   logSet: (input: {
     movementId: string;
     reps: number;
     rir: SetEntry['rir'];
-    load?: number;
-  }) => SetEntry;
-  updateSet: (
-    id: string,
-    patch: Partial<Pick<SetEntry, 'reps' | 'rir' | 'load' | 'performedAt' | 'movementId'>>,
-  ) => void;
-  deleteSet: (id: string) => void;
-  setLastMovementId: (id: string) => void;
+    load?: Load;
+  }) => Promise<SetEntry>;
+  updateSet: (id: string, patch: SetPatch) => Promise<void>;
+  deleteSet: (id: string) => Promise<void>;
+  setLastMovementId: (id: string | null) => Promise<void>;
 }
 
 const TrainingContext = createContext<TrainingState | null>(null);
 
 export function TrainingProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [sets, setSets] = useState<SetEntry[]>([]);
+  const [bands, setBands] = useState<ResistanceBand[]>([]);
   const [lastMovementId, setLastMovementIdState] = useState<string | null>(null);
-  const loaded = useRef(false);
+  const movementsRef = useRef<Movement[]>([]);
+  const setsRef = useRef<SetEntry[]>([]);
+  const bandsRef = useRef<ResistanceBand[]>([]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [m, s, last] = await Promise.all([
-          AsyncStorage.getItem(MOVEMENTS_KEY),
-          AsyncStorage.getItem(SETS_KEY),
-          AsyncStorage.getItem(LAST_MOVEMENT_KEY),
-        ]);
-        let movementsList: Movement[];
-        if (m) {
-          movementsList = JSON.parse(m) as Movement[];
-        } else {
-          movementsList = seedMovements();
-          await AsyncStorage.setItem(MOVEMENTS_KEY, JSON.stringify(movementsList));
-        }
-        setMovements(movementsList);
-        setSets(s ? (JSON.parse(s) as SetEntry[]) : []);
-        setLastMovementIdState(last ?? movementsList[0]?.id ?? null);
-      } finally {
-        loaded.current = true;
-        setReady(true);
-      }
-    })();
+  const commitMovements = useCallback((next: Movement[]) => {
+    movementsRef.current = next;
+    setMovements(next);
+  }, []);
+  const commitSets = useCallback((next: SetEntry[]) => {
+    setsRef.current = next;
+    setSets(next);
+  }, []);
+  const commitBands = useCallback((next: ResistanceBand[]) => {
+    bandsRef.current = next;
+    setBands(next);
   }, []);
 
   useEffect(() => {
-    if (!loaded.current) return;
-    AsyncStorage.setItem(MOVEMENTS_KEY, JSON.stringify(movements));
-  }, [movements]);
+    let active = true;
+    initializeDatabase(seedMovements())
+      .then((snapshot) => {
+        if (!active) return;
+        commitMovements(snapshot.movements);
+        commitSets(snapshot.sets);
+        commitBands(snapshot.bands);
+        setLastMovementIdState(snapshot.lastMovementId);
+        setReady(true);
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setError(cause instanceof Error ? cause : new Error(String(cause)));
+        setReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [commitBands, commitMovements, commitSets]);
 
-  useEffect(() => {
-    if (!loaded.current) return;
-    AsyncStorage.setItem(SETS_KEY, JSON.stringify(sets));
-  }, [sets]);
-
-  const setLastMovementId = useCallback((id: string) => {
+  const setLastMovementId = useCallback(async (id: string | null): Promise<void> => {
+    await persistLastMovement(id);
     setLastMovementIdState(id);
-    AsyncStorage.setItem(LAST_MOVEMENT_KEY, id);
   }, []);
 
   const addMovement = useCallback(
-    (name: string, pattern: Pattern): Movement | null => {
+    async (name: string, pattern: Pattern, defaultLoad?: Load): Promise<Movement | null> => {
       const trimmed = name.trim();
       if (!trimmed) return null;
       const movement: Movement = {
@@ -112,31 +131,72 @@ export function TrainingProvider({ children }: { children: React.ReactNode }) {
         name: trimmed,
         pattern,
         createdAt: new Date().toISOString(),
+        ...(defaultLoad ? { defaultLoad } : {}),
       };
-      setMovements((prev) => [...prev, movement]);
+      await persistMovement(movement);
+      commitMovements([...movementsRef.current, movement]);
       return movement;
     },
-    [],
+    [commitMovements],
   );
 
   const deleteMovement = useCallback(
-    (id: string): boolean => {
-      let ok = false;
-      setSets((currentSets) => {
-        const hasSets = currentSets.some((s) => s.movementId === id);
-        if (!hasSets) {
-          ok = true;
-          setMovements((prev) => prev.filter((m) => m.id !== id));
-        }
-        return currentSets;
-      });
-      return ok;
+    async (id: string): Promise<boolean> => {
+      const deleted = await removeMovement(id);
+      if (deleted) commitMovements(movementsRef.current.filter((movement) => movement.id !== id));
+      return deleted;
     },
-    [],
+    [commitMovements],
+  );
+
+  const updateMovementDefaultLoad = useCallback(
+    async (id: string, defaultLoad?: Load): Promise<void> => {
+      await persistMovementDefault(id, defaultLoad);
+      commitMovements(
+        movementsRef.current.map((movement) => {
+          if (movement.id !== id) return movement;
+          const { defaultLoad: _previous, ...withoutDefault } = movement;
+          return defaultLoad ? { ...withoutDefault, defaultLoad } : withoutDefault;
+        }),
+      );
+    },
+    [commitMovements],
+  );
+
+  const addBand = useCallback(
+    async (name: string): Promise<ResistanceBand | null> => {
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+      const band: ResistanceBand = {
+        id: makeId(),
+        name: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+      await persistBand(band);
+      commitBands([...bandsRef.current, band]);
+      return band;
+    },
+    [commitBands],
+  );
+
+  const deleteBand = useCallback(
+    async (id: string): Promise<boolean> => {
+      const band = bandsRef.current.find((candidate) => candidate.id === id);
+      if (!band) return false;
+      const deleted = await removeBand(id, band.name);
+      if (deleted) commitBands(bandsRef.current.filter((candidate) => candidate.id !== id));
+      return deleted;
+    },
+    [commitBands],
   );
 
   const logSet = useCallback(
-    (input: { movementId: string; reps: number; rir: SetEntry['rir']; load?: number }) => {
+    async (input: {
+      movementId: string;
+      reps: number;
+      rir: SetEntry['rir'];
+      load?: Load;
+    }): Promise<SetEntry> => {
       const now = new Date().toISOString();
       const entry: SetEntry = {
         id: makeId(),
@@ -149,44 +209,43 @@ export function TrainingProvider({ children }: { children: React.ReactNode }) {
         timestampEdited: false,
         ...(input.load ? { load: input.load } : {}),
       };
-      setSets((prev) => [...prev, entry]);
-      setLastMovementId(input.movementId);
+      await persistSet(entry);
+      commitSets([...setsRef.current, entry]);
+      setLastMovementIdState(input.movementId);
       return entry;
     },
-    [setLastMovementId],
+    [commitSets],
   );
 
   const updateSet = useCallback(
-    (
-      id: string,
-      patch: Partial<Pick<SetEntry, 'reps' | 'rir' | 'load' | 'performedAt' | 'movementId'>>,
-    ) => {
-      setSets((prev) =>
-        prev.map((s) => {
-          if (s.id !== id) return s;
-          const next = { ...s, ...patch };
-          if (patch.performedAt && patch.performedAt !== s.performedAt) {
-            next.timestampEdited = true;
-          }
-          return next;
-        }),
-      );
+    async (id: string, patch: SetPatch): Promise<void> => {
+      const next = await persistSetPatch(id, patch);
+      commitSets(setsRef.current.map((entry) => (entry.id === id ? next : entry)));
     },
-    [],
+    [commitSets],
   );
 
-  const deleteSet = useCallback((id: string) => {
-    setSets((prev) => prev.filter((s) => s.id !== id));
-  }, []);
+  const deleteSet = useCallback(
+    async (id: string): Promise<void> => {
+      await removeSet(id);
+      commitSets(setsRef.current.filter((entry) => entry.id !== id));
+    },
+    [commitSets],
+  );
 
   const value = useMemo(
     () => ({
       ready,
+      error,
       movements,
       sets,
+      bands,
       lastMovementId,
       addMovement,
       deleteMovement,
+      updateMovementDefaultLoad,
+      addBand,
+      deleteBand,
       logSet,
       updateSet,
       deleteSet,
@@ -194,11 +253,16 @@ export function TrainingProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       ready,
+      error,
       movements,
       sets,
+      bands,
       lastMovementId,
       addMovement,
       deleteMovement,
+      updateMovementDefaultLoad,
+      addBand,
+      deleteBand,
       logSet,
       updateSet,
       deleteSet,
@@ -223,7 +287,7 @@ export function useTodaySets(): SetEntry[] {
     start.setHours(0, 0, 0, 0);
     const startMs = start.getTime();
     return sets
-      .filter((s) => new Date(s.performedAt).getTime() >= startMs)
+      .filter((set) => new Date(set.performedAt).getTime() >= startMs)
       .sort((a, b) => a.performedAt.localeCompare(b.performedAt));
   }, [sets]);
 }
